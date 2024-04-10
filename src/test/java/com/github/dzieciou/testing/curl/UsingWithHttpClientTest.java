@@ -9,9 +9,10 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.HttpClientBuilder;
+
+import org.apache.hc.client5.http.classic.HttpClient;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -41,7 +42,7 @@ public class UsingWithHttpClientTest {
 
   private static HttpClient createHttpClient() {
     return HttpClientBuilder.create()
-        .addInterceptorFirst(
+        .addRequestInterceptorFirst(
             new CurlGeneratingInterceptor(
                 Options.builder()
                     .targetPlatform(Platform.UNIX) // TO ease verifying output curl

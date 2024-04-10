@@ -31,12 +31,12 @@
 
 package com.github.dzieciou.testing.curl;
 
-import io.restassured.internal.multipart.RestAssuredMultiPartEntity;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -48,17 +48,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import org.apache.http.Header;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpEntityEnclosingRequest;
-import org.apache.http.HttpRequest;
-import org.apache.http.client.methods.HttpRequestWrapper;
-import org.apache.http.entity.mime.FormBodyPart;
-import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.entity.mime.content.ContentBody;
-import org.apache.http.impl.client.RequestWrapper;
-import org.apache.http.message.BasicHeader;
-import org.apache.http.util.EntityUtils;
+
+import org.apache.hc.client5.http.entity.mime.ContentBody;
+import org.apache.hc.client5.http.entity.mime.FormBodyPart;
+import org.apache.hc.core5.http.Header;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.HttpEntityContainer;
+import org.apache.hc.core5.http.HttpRequest;
+import org.apache.hc.core5.http.ParseException;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.message.BasicHeader;
+import org.apache.hc.core5.http.message.HttpRequestWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,16 +92,14 @@ public class Http2Curl {
   @SuppressWarnings("deprecation")
   private static String getOriginalRequestUri(HttpRequest request) {
     if (request instanceof HttpRequestWrapper) {
-      return ((HttpRequestWrapper) request).getOriginal().getRequestLine().getUri();
-    } else if (request instanceof RequestWrapper) {
-      return ((RequestWrapper) request).getOriginal().getRequestLine().getUri();
+      return request.getRequestUri();
     } else {
       throw new IllegalArgumentException("Unsupported request class type: " + request.getClass());
     }
   }
 
   private static String getHost(HttpRequest request) {
-    return tryGetHeaderValue(Arrays.asList(request.getAllHeaders()), "Host")
+    return tryGetHeaderValue(Arrays.asList(request.getHeaders()), "Host")
         .orElseGet(() -> URI.create(getOriginalRequestUri(request)).getHost());
   }
 
@@ -172,14 +170,14 @@ public class Http2Curl {
 
   private CurlCommand http2curl(HttpRequest request) throws IOException {
 
-    Headers headers = new Headers(Arrays.asList(request.getAllHeaders()));
+    Headers headers = new Headers(Arrays.asList(request.getHeaders()));
     CurlCommand curl = new CurlCommand();
 
     String inferredUri = inferUri(request);
     curl.setUrl(inferredUri);
 
-    if (request instanceof HttpEntityEnclosingRequest) {
-      HttpEntityEnclosingRequest requestWithEntity = (HttpEntityEnclosingRequest) request;
+    if (request instanceof HttpEntityContainer) {
+      HttpEntityContainer requestWithEntity = (HttpEntityContainer) request;
       try {
         HttpEntity entity = requestWithEntity.getEntity();
         if (entity != null) {
@@ -196,7 +194,7 @@ public class Http2Curl {
       }
     }
 
-    String requestMethod = request.getRequestLine().getMethod();
+    String requestMethod = request.getMethod();
     if (options.alwaysPrintMethod()) {
       curl.setMethod(requestMethod);
     } else {
@@ -248,16 +246,21 @@ public class Http2Curl {
     switch (contentType) {
       case "multipart/form-data":
         headers.ignored.add("Content-Type"); // let curl command decide
-        handleMultipartEntity(entity, curl);
+//        handleMultipartEntity(entity, curl);
         break;
       case "multipart/mixed":
         // Removing header
         headers.toProcess = filterOutHeader(headers.toProcess, "Content-Type");
         headers.toProcess.add(new BasicHeader("Content-Type", "multipart/mixed"));
-        handleMultipartEntity(entity, curl);
+//        handleMultipartEntity(entity, curl);
         break;
       default:
-        String data = EntityUtils.toString(entity);
+        String data = null;
+        try {
+          data = EntityUtils.toString(entity);
+        } catch (ParseException e) {
+          e.printStackTrace();
+        }
         curl.addDataBinary(data);
     }
   }
@@ -267,13 +270,18 @@ public class Http2Curl {
   }
 
   private String inferUri(HttpRequest request) {
-    String inferredUri = request.getRequestLine().getUri();
+    String inferredUri = null;
+    try {
+      inferredUri = request.getUri().toString();
+    } catch (URISyntaxException e) {
+      e.printStackTrace();
+    }
     if (!isValidUrl(inferredUri)) { // Missing schema and domain name
       String host = getHost(request);
       String inferredScheme = "http";
       if (host.endsWith(":443")) {
         inferredScheme = "https";
-      } else if ((request instanceof RequestWrapper) || (request instanceof HttpRequestWrapper)) {
+      } else if (request instanceof HttpRequestWrapper) {
         if (getOriginalRequestUri(request).startsWith("https")) {
           // This is for original URL, so if during redirects we go out of HTTPs, this might be a
           // wrong guess
@@ -281,7 +289,7 @@ public class Http2Curl {
         }
       }
 
-      if ("CONNECT".equals(request.getRequestLine().getMethod())) {
+      if ("CONNECT".equals(request.getMethod())) {
         inferredUri = String.format("%s://%s", inferredScheme, host);
       } else {
         inferredUri =
@@ -292,22 +300,21 @@ public class Http2Curl {
     return inferredUri;
   }
 
-  private void handleMultipartEntity(HttpEntity entity, CurlCommand curl) {
-    try {
-      HttpEntity wrappedEntity = (HttpEntity) getFieldValue(entity, "wrappedEntity");
-      RestAssuredMultiPartEntity multiPartEntity = (RestAssuredMultiPartEntity) wrappedEntity;
-      MultipartEntityBuilder multipartEntityBuilder =
-          (MultipartEntityBuilder) getFieldValue(multiPartEntity, "builder");
-
-      @SuppressWarnings("unchecked")
-      List<FormBodyPart> bodyParts =
-          (List<FormBodyPart>) getFieldValue(multipartEntityBuilder, "bodyParts");
-
-      bodyParts.forEach(p -> handlePart(p, curl));
-    } catch (NoSuchFieldException | IllegalAccessException e) {
-      throw new RuntimeException(e);
-    }
-  }
+//  private void handleMultipartEntity(HttpEntity entity, CurlCommand curl) {
+//    try {
+//      HttpEntity multiPartEntity = (MultipartFormEntity) getFieldValue(entity, "wrappedEntity");
+//      MultipartEntityBuilder multipartEntityBuilder =
+//          (MultipartEntityBuilder) getFieldValue(multiPartEntity, "builder");
+//
+//      @SuppressWarnings("unchecked")
+//      List<FormBodyPart> bodyParts =
+//          (List<FormBodyPart>) getFieldValue(multipartEntityBuilder, "bodyParts");
+//
+//      bodyParts.forEach(p -> handlePart(p, curl));
+//    } catch (NoSuchFieldException | IllegalAccessException e) {
+//      throw new RuntimeException(e);
+//    }
+//  }
 
   private void handlePart(FormBodyPart bodyPart, CurlCommand curl) {
     String contentDisposition =

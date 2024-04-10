@@ -2,9 +2,11 @@ package com.github.dzieciou.testing.curl;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpRequestInterceptor;
-import org.apache.http.protocol.HttpContext;
+
+import org.apache.hc.core5.http.EntityDetails;
+import org.apache.hc.core5.http.HttpRequest;
+import org.apache.hc.core5.http.HttpRequestInterceptor;
+import org.apache.hc.core5.http.protocol.HttpContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,7 +37,7 @@ public class CurlGeneratingInterceptor implements HttpRequestInterceptor {
   }
 
   @Override
-  public void process(HttpRequest request, HttpContext context) {
+  public void process(HttpRequest request, EntityDetails entityDetails, HttpContext context) {
     try {
       String curl = http2Curl.generateCurl(request);
       StringBuffer message = new StringBuffer(curl);
